@@ -23,17 +23,13 @@
       
         <header class="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-lg">
             <h1 class="text-xl font-semibold text-gray-800">Ai chat bot</h1>
-            <div id="status-info" class="text-right text-xs">
-                <p id="auth-status" class="font-medium text-gray-600">Status: Connecting...</p>
-                
-                <p id="user-id" class="text-gray-500 mt-1">User ID: N/A</p>
-            </div>
+            
         </header>
 
        
         <main id="chat-area" class="flex-grow p-4 overflow-y-auto space-y-4 custom-scrollbar">
             <div id="initial-message" class="text-center p-8 text-gray-500 italic">
-                Initializing application...
+                Loading chat history from your browser...
             </div>
         </main>
 
@@ -49,13 +45,11 @@
                     placeholder="Type a message..."
                     class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     required
-                    disabled
                 >
                 <button
                     type="submit"
                     id="send-button"
                     class="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 disabled:bg-indigo-400"
-                    disabled
                 >
                     Send
                 </button>
@@ -65,34 +59,13 @@
 
   
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { 
-            getFirestore, collection, query, orderBy, onSnapshot, 
-            addDoc, serverTimestamp, doc, setLogLevel 
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-      
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-        const FALLBACK_CONFIG = {
-          apiKey: "AIzaSyDmZFWCTHFd61jflLJG_oazvA_J6V3UOC4",
-  authDomain: "ai-chat-bot-d9902.firebaseapp.com",
-  projectId: "ai-chat-bot-d9902",
-  storageBucket: "ai-chat-bot-d9902.firebasestorage.app",
-  messagingSenderId: "286852441497",
-  appId: "1:286852441497:web:2400557be9cb9000d25f08",
-  measurementId: "G-86TLKNPVR0"
-        }; 
-
-
-
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : FALLBACK_CONFIG;
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
+        
+        const CHAT_STORAGE_KEY = 'chatbot_history';
        
         const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent";
-        const API_KEY = "";
+        
+        const API_KEY = "INSERT_YOUR_GEMINI_API_KEY_HERE"; 
+        
         const SYSTEM_INSTRUCTION = "You are an 'Ai Chatbot', a straightforward and concise AI designed to help the user organize their thoughts. Keep responses short and action-oriented. Do not use complex language or refer to yourself as an AI or model.";
         
         
@@ -100,15 +73,10 @@
         const messageForm = document.getElementById('message-form');
         const messageInput = document.getElementById('message-input');
         const sendButton = document.getElementById('send-button');
-        const authStatus = document.getElementById('auth-status');
-        const userIdDisplay = document.getElementById('user-id');
         const errorBox = document.getElementById('error-box');
         const initialMessage = document.getElementById('initial-message');
 
-        let db, auth, currentUserId = null;
         let isProcessing = false;
-
-       
 
        
         function displayError(message) {
@@ -133,7 +101,9 @@
             textContent = textContent.replace(/\n/g, '<br/>');
 
             const isUser = message.sender === 'user';
-            const timestamp = message.timestamp ? new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+            
+            const timestampDate = new Date(message.timestamp || Date.now());
+            const timestamp = timestampDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
             const messageDiv = document.createElement('div');
             messageDiv.className = `flex ${isUser ? 'justify-end' : 'justify-start'}`;
@@ -170,102 +140,36 @@
         }
 
         
-        async function initializeAppAndAuth() {
+        function loadHistory() {
             try {
-                if (Object.keys(firebaseConfig).length === 0) {
-                    displayError("Firebase configuration is missing.");
-                    return;
-                }
-                
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                
-             
-                setLogLevel('Debug'); 
+                const storedHistory = localStorage.getItem(CHAT_STORAGE_KEY);
+                const chatHistory = storedHistory ? JSON.parse(storedHistory) : [];
 
-                authStatus.textContent = 'Status: Authenticating...';
+                chatArea.innerHTML = ''; 
 
-             
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken)
-                        .catch(e => {
-                            console.warn("Custom token failed, signing in anonymously:", e);
-                            signInAnonymously(auth); 
-                        });
+                if (chatHistory.length === 0) {
+                     initialMessage.textContent = 'Welcome! Start chatting with Ai chat bot! Your history will be saved here.';
+                     chatArea.appendChild(initialMessage);
                 } else {
-                    await signInAnonymously(auth);
+                    chatHistory.forEach(renderMessage);
                 }
-
-            
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        currentUserId = user.uid;
-                        authStatus.textContent = 'Status: Ready';
-                        userIdDisplay.textContent = `User ID: ${currentUserId}`;
-                        messageInput.disabled = false;
-                        sendButton.disabled = false;
-                        initialMessage.textContent = 'Welcome! Start chatting with Ai chat bot! ';
-                        
-                      
-                        listenToHistory();
-                    } else {
-                        currentUserId = null;
-                        authStatus.textContent = 'Status: Disconnected';
-                        userIdDisplay.textContent = 'User ID: N/A';
-                        messageInput.disabled = true;
-                        sendButton.disabled = true;
-                        chatArea.innerHTML = '<div class="text-center p-8 text-gray-500 italic">Please authenticate to load chat history.</div>';
-                    }
-                });
+                
+                messageInput.disabled = false;
+                sendButton.disabled = false;
+                scrollToBottom();
 
             } catch (e) {
-                displayError("Failed to initialize Firebase services.");
-                console.error("Firebase Init Error:", e);
+                displayError("Failed to load chat history from local storage.");
+                console.error("Local Storage Load Error:", e);
             }
-        }
-
-
-        function listenToHistory() {
-            if (!db || !currentUserId) return;
-
-      
-            const historyCollectionRef = collection(db, 'artifacts', appId, 'users', currentUserId, 'chat_history');
-            
-    
-            const q = query(historyCollectionRef, orderBy('timestamp', 'asc'));
-
-            onSnapshot(q, (snapshot) => {
-           
-                if (initialMessage.parentNode) {
-                    initialMessage.remove();
-                }
-
-                const docs = snapshot.docs;
-               
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === 'added') {
-                        const msg = change.doc.data();
-                        renderMessage({
-                            id: change.doc.id,
-                            ...msg,
-                           
-                            timestamp: msg.timestamp ? msg.timestamp.toDate().getTime() : Date.now()
-                        });
-                    }
-                });
-                
-                scrollToBottom();
-                clearError();
-            }, (e) => {
-                displayError("Failed to load chat history in real-time.");
-                console.error("Firestore Error:", e);
-            });
         }
 
     
         async function callGeminiApi(conversationHistory) {
-            const chatHistory = conversationHistory.map(msg => ({
+            
+            const filteredHistory = conversationHistory.filter(msg => msg.text && msg.sender);
+            
+            const chatHistory = filteredHistory.map(msg => ({
                 role: msg.sender === 'user' ? 'user' : 'model',
                 parts: [{ text: msg.text }]
             }));
@@ -306,14 +210,14 @@
                         await delay(backoffTime);
                     } else {
                         console.error("failed after multiple retries:", e);
-                        throw new Error("Could not connect. Please try again later.");
+                        throw new Error("Could not connect to AI. Please try again later.");
                     }
                 }
             }
             
             const text = response?.candidates?.[0]?.content?.parts?.[0]?.text;
             if (!text) {
-                throw new Error("Received an empty response.");
+                throw new Error("Received an empty response from the AI.");
             }
             return text;
         }
@@ -321,9 +225,9 @@
       
         async function sendMessage(e) {
             e.preventDefault();
-            if (isProcessing || !currentUserId || messageInput.value.trim() === '') return;
-
             const userMessageText = messageInput.value.trim();
+            if (isProcessing || userMessageText === '') return;
+
             messageInput.value = '';
             
             clearError();
@@ -331,52 +235,93 @@
             sendButton.disabled = true;
             messageInput.disabled = true;
 
+            const timestamp = new Date().toISOString();
+
             const userMessageData = {
                 text: userMessageText,
                 sender: 'user',
-                timestamp: serverTimestamp(),
+                timestamp: timestamp,
             };
-
+            
+            let chatHistory = [];
             try {
-                const historyCollectionRef = collection(db, 'artifacts', appId, 'users', currentUserId, 'chat_history');
+                const storedHistory = localStorage.getItem(CHAT_STORAGE_KEY);
+                chatHistory = storedHistory ? JSON.parse(storedHistory) : [];
+            } catch(e) {
+                console.error("Error parsing chat history:", e);
+            }
+            
+            
+            chatHistory.push(userMessageData);
+            localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatHistory));
+            renderMessage(userMessageData);
+
+            
+            if (initialMessage && initialMessage.parentNode) {
+                initialMessage.remove();
+            }
+            renderLoadingMessage();
+            scrollToBottom();
+            
+            try {
                 
-               
-                await addDoc(historyCollectionRef, userMessageData);
+                const aiResponseText = await callGeminiApi(chatHistory);
 
-                const tempMessages = Array.from(chatArea.children).map(node => {
-                    const isUser = node.querySelector('.bg-indigo-600');
-                  
-                    const text = node.querySelector('p')?.textContent || '';
-                    return { sender: isUser ? 'user' : 'coach', text };
-                }).filter(msg => msg.text.length > 0);
                 
-   
-                tempMessages.push({ sender: 'user', text: userMessageText });
-
+                removeLoadingMessage();
           
-                const aiResponseText = await callGeminiApi(tempMessages);
-
-          
+                
                 const aiMessageData = {
                     text: aiResponseText,
                     sender: 'coach',
-                    timestamp: serverTimestamp(),
+                    timestamp: new Date().toISOString(),
                 };
-                await addDoc(historyCollectionRef, aiMessageData);
+                
+                chatHistory.push(aiMessageData);
+                localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatHistory));
+                renderMessage(aiMessageData);
+
 
             } catch (e) {
-                displayError(e.message || "An unexpected error occurred.");
+                removeLoadingMessage();
+                displayError(e.message || "An unexpected error occurred during message send.");
             } finally {
                 isProcessing = false;
                 sendButton.disabled = false;
                 messageInput.disabled = false;
                 messageInput.focus();
+                scrollToBottom();
+            }
+        }
+
+        
+        function renderLoadingMessage() {
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'loading-coach-message';
+            loadingDiv.className = 'flex justify-start';
+            loadingDiv.innerHTML = `
+                <div class="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700 mr-2 order-1 font-bold text-lg">C</div>
+                <div class="bg-gray-200 px-4 py-3 rounded-xl rounded-tl-none shadow-md order-2">
+                    <div class="animate-pulse flex space-x-2">
+                        <div class="h-2 w-2 bg-gray-400 rounded-full"></div>
+                        <div class="h-2 w-2 bg-gray-400 rounded-full"></div>
+                        <div class="h-2 w-2 bg-gray-400 rounded-full"></div>
+                    </div>
+                </div>
+            `;
+            chatArea.appendChild(loadingDiv);
+        }
+
+        function removeLoadingMessage() {
+            const loadingDiv = document.getElementById('loading-coach-message');
+            if (loadingDiv) {
+                loadingDiv.remove();
             }
         }
         
-        // --- Event Listeners and Initialization ---
+        
 
-        window.onload = initializeAppAndAuth;
+        window.onload = loadHistory; 
 
         messageForm.addEventListener('submit', sendMessage);
 
